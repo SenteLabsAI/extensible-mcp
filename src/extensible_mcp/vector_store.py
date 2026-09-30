@@ -9,16 +9,26 @@ from fastembed import TextEmbedding
 from .types import SearchResult, ToolRecord
 
 _DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+# fastembed pads every text in a batch to the batch's longest (up to the
+# model's 256 tokens), so the attention buffers grow with batch size x 256^2.
+# Indexing ~120 tool descriptions as one batch peaks above 1 GB of RSS;
+# 16 at a time keeps the index build to a few hundred MB.
+_EMBED_BATCH_SIZE = 16
 
 
 class VectorStore:
-    def __init__(self, model_name: str = _DEFAULT_MODEL) -> None:
+    def __init__(
+        self, model_name: str = _DEFAULT_MODEL, embed_batch_size: int = _EMBED_BATCH_SIZE
+    ) -> None:
+        if embed_batch_size < 1:
+            raise ValueError(f"embed_batch_size must be positive, got {embed_batch_size}")
         self._model = TextEmbedding(model_name=model_name)
+        self._embed_batch_size = embed_batch_size
         self._tools: list[ToolRecord] = []
         self._embeddings: np.ndarray | None = None
 
     def _encode(self, texts: list[str]) -> np.ndarray:
-        embeddings = np.array(list(self._model.embed(texts)), dtype=np.float32)
+        embeddings = np.array(list(self._model.embed(texts, batch_size=self._embed_batch_size)), dtype=np.float32)
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         norms = np.where(norms == 0, 1, norms)
         return embeddings / norms
