@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Matthew Fuchs
 # SPDX-License-Identifier: Apache-2.0
 
+import numpy as np
 import pytest
 
 from extensible_mcp.types import ToolRecord
@@ -112,3 +113,44 @@ class TestVectorStore:
         original_count = len(store._tools)
         store.add([])
         assert len(store._tools) == original_count
+
+
+# Descriptions from a few tokens to past the model's 256-token limit, so the
+# batches the store splits them into are padded to different lengths.
+_MIXED_LENGTH_TOOLS = [
+    _make_tool(f"tool_{i}", "svc", ("Does one thing. " * (i * 6)).strip(), {})
+    for i in range(1, 21)
+]
+
+
+class TestEmbeddingBatches:
+    def test_index_mixed_length_descriptions(self):
+        store = VectorStore()
+        store.index(_MIXED_LENGTH_TOOLS)
+        assert store._embeddings is not None
+        assert store._embeddings.shape[0] == len(_MIXED_LENGTH_TOOLS)
+
+    def test_batched_embeddings_match_a_single_batch(self):
+        batched = VectorStore(embed_batch_size=3)
+        batched.index(_MIXED_LENGTH_TOOLS)
+        single = VectorStore(embed_batch_size=len(_MIXED_LENGTH_TOOLS))
+        single.index(_MIXED_LENGTH_TOOLS)
+        assert np.allclose(batched._embeddings, single._embeddings, atol=1e-4)
+
+    def test_embed_receives_the_batch_size(self, monkeypatch):
+        store = VectorStore(embed_batch_size=7)
+        seen = []
+        real_embed = store._model.embed
+
+        def spy(texts, **kwargs):
+            seen.append(kwargs.get("batch_size"))
+            return real_embed(texts, **kwargs)
+
+        monkeypatch.setattr(store._model, "embed", spy)
+        store.index(_SAMPLE_TOOLS)
+        assert seen == [7]
+
+    @pytest.mark.parametrize("size", [0, -1])
+    def test_rejects_a_non_positive_batch_size(self, size):
+        with pytest.raises(ValueError, match="embed_batch_size"):
+            VectorStore(embed_batch_size=size)
