@@ -150,6 +150,24 @@ class TestEmbeddingBatches:
         store.index(_SAMPLE_TOOLS)
         assert seen == [7]
 
+    def test_embeds_one_text_at_a_time_by_default(self, monkeypatch):
+        store = VectorStore()
+        seen = []
+        real_embed = store._model.embed
+
+        def spy(texts, **kwargs):
+            seen.append(kwargs.get("batch_size"))
+            return real_embed(texts, **kwargs)
+
+        monkeypatch.setattr(store._model, "embed", spy)
+        store.index(_SAMPLE_TOOLS)
+        assert seen == [1]
+
+    def test_onnx_memory_arena_is_off(self):
+        # The arena would keep the index build's peak allocation resident.
+        session = VectorStore()._model.model.model
+        assert session.get_session_options().enable_cpu_mem_arena is False
+
     @pytest.mark.parametrize("size", [0, -1])
     def test_rejects_a_non_positive_batch_size(self, size):
         with pytest.raises(ValueError, match="embed_batch_size"):
