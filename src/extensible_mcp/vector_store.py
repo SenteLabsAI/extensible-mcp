@@ -9,11 +9,11 @@ from fastembed import TextEmbedding
 from .types import SearchResult, ToolRecord
 
 _DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-# fastembed pads every text in a batch to the batch's longest (up to the
-# model's 256 tokens), so the attention buffers grow with batch size x 256^2.
-# Indexing ~120 tool descriptions as one batch peaks above 1 GB of RSS;
-# 16 at a time keeps the index build to a few hundred MB.
-_EMBED_BATCH_SIZE = 16
+# One text per batch. fastembed pads a batch to its longest text (up to the
+# model's 256 tokens), so bigger batches cost attention memory that grows with
+# batch size x 256^2 and time spent on padding; tool descriptions are indexed
+# once and each search embeds one query, so batching buys nothing here.
+_EMBED_BATCH_SIZE = 1
 
 
 class VectorStore:
@@ -22,7 +22,10 @@ class VectorStore:
     ) -> None:
         if embed_batch_size < 1:
             raise ValueError(f"embed_batch_size must be positive, got {embed_batch_size}")
-        self._model = TextEmbedding(model_name=model_name)
+        # ONNX Runtime's CPU memory arena keeps the largest allocation it has made
+        # for the life of the session, so the one-off index build would stay
+        # resident (about 250 MB for ~50 tools) while searches need a few MB.
+        self._model = TextEmbedding(model_name=model_name, enable_cpu_mem_arena=False)
         self._embed_batch_size = embed_batch_size
         self._tools: list[ToolRecord] = []
         self._embeddings: np.ndarray | None = None
