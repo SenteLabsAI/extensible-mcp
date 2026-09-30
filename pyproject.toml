@@ -8,7 +8,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Matthew Fuchs" }]
 dependencies = [
     "fastmcp>=2.0.0",
-    "mcp>=1.0.0",
+    "mcp>=1.24.0,<3",
     "fastembed>=0.8.1",
     "numpy>=1.24.0",
     "regopy>=0.4.0",

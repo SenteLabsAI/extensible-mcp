@@ -43,6 +43,7 @@ Three independent pipelines (`FilterPipeline`, `CallFilterPipeline`, `ServerLoad
 - **`client_manager.py`** — Manages stdio and Streamable HTTP connections to downstream MCP servers. Handles connect/reconnect, tool indexing, and proxying `call_tool` requests. Tools are namespaced as `{server_name}__{tool_name}`.
 - **`vector_store.py`** — In-memory vector index using FastEmbed (ONNX runtime) with `all-MiniLM-L6-v2`. Encodes tool definitions and does cosine similarity search via normalized dot product.
 - **`filters.py`** — Filter Protocols (`ToolFilter`, `CallFilter`, `ServerLoadFilter`), pipeline classes, and the built-in reference filters. The Protocols and request/result dataclasses are re-exported from `extensible_mcp/__init__.py` for third-party imports.
+- **`_mcp_compat.py`** — Bridges the MCP SDK's 1.x → 2.x break (HTTP transport tuple, `httpx` vs `httpx2`, camelCase vs snake_case model fields). Anything touching those goes through it; CI runs the suite on both SDK majors.
 - **`config.py`** — Loads JSON config (same `mcpServers` format as Claude Desktop). Config resolution order: `--config` flag → `EXTENSIBLE_MCP_CONFIG` env var → platform-specific default paths → `./config.json`.
 - **`types.py`** — Shared dataclasses: `ServerConfig`, `ToolRecord` (builds its own `embedding_text` from name + description + params), `SearchResult`, `CallRequest`, `CallFilterResult`, `ServerLoadRequest`, `ServerLoadResult`.
 
