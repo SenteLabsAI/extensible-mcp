@@ -6,12 +6,13 @@ import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
 
+from extensible_mcp._mcp_compat import http_lib, result_is_error
 from extensible_mcp.client_manager import (
     ClientManager,
     TokenExpiredError,
+    _AuthWatch,
     _Connection,
     _read_tokens_file,
 )
@@ -58,7 +59,7 @@ class TestClientManager:
         try:
             await mgr.connect_all(configs)
             result = await mgr.call_tool("mock__add_numbers", {"a": 2, "b": 3})
-            assert not result.isError
+            assert not result_is_error(result)
             text = result.content[0].text
             assert "5" in text
         finally:
@@ -166,10 +167,13 @@ def _make_conn(server_name: str = "test-server") -> _Connection:
     return conn
 
 
-def _httpx_status_error(code: int) -> httpx.HTTPStatusError:
-    request = httpx.Request("POST", "https://example.com/mcp")
-    response = httpx.Response(code, request=request)
-    return httpx.HTTPStatusError(f"HTTP {code}", request=request, response=response)
+def _httpx_status_error(code: int) -> Exception:
+    # The status error of whichever HTTP library the installed SDK uses, with a
+    # message that carries no status code, so only the isinstance check can
+    # recognise it.
+    request = http_lib.Request("POST", "https://example.com/mcp")
+    response = http_lib.Response(code, request=request)
+    return http_lib.HTTPStatusError("request failed", request=request, response=response)
 
 
 class TestCheckAuthError:
@@ -188,6 +192,15 @@ class TestCheckAuthError:
         conn = _make_conn()
         # Returns None; caller is expected to re-raise the original exception.
         assert conn._check_auth_error(_httpx_status_error(500)) is None
+
+    def test_rejected_status_seen_by_the_client_raises_token_expired(self):
+        # mcp 2.x reports a 401 as a JSON-RPC error with no status in it, so the
+        # response hook's record is the only sign it was auth.
+        conn = _make_conn()
+        exc = RuntimeError("Server returned an error response")
+        assert conn._check_auth_error(exc) is None
+        with pytest.raises(TokenExpiredError):
+            conn._check_auth_error(exc, auth_rejected=True)
 
     def test_message_contains_401(self):
         conn = _make_conn()
@@ -224,3 +237,17 @@ class TestCheckAuthError:
         conn = _make_conn()
         eg = ExceptionGroup("task group failed", [ValueError("unrelated")])
         assert conn._check_auth_error(eg) is None
+
+
+class TestAuthWatch:
+    @pytest.mark.parametrize(("status", "rejected"), [(200, False), (401, True), (403, True), (500, False)])
+    def test_records_only_auth_rejections(self, status, rejected):
+        watch = _AuthWatch()
+        asyncio.run(watch.on_response(MagicMock(status_code=status)))
+        assert watch.rejected is rejected
+
+    def test_stays_rejected_after_a_later_success(self):
+        watch = _AuthWatch()
+        asyncio.run(watch.on_response(MagicMock(status_code=401)))
+        asyncio.run(watch.on_response(MagicMock(status_code=200)))
+        assert watch.rejected

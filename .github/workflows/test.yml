@@ -13,6 +13,9 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
+        # uv.lock pins mcp 1.x, but `mcp>=1.24.0,<3` lets installers pick 2.x,
+        # whose transport and field names differ (see _mcp_compat.py). Test both.
+        mcp: ["locked", "2"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
@@ -20,5 +23,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: uv sync --group dev
+      - name: Upgrade to mcp 2.x
+        if: matrix.mcp == '2'
+        run: uv pip install "mcp>=2,<3" "fastmcp>=4"
       - name: Run tests
-        run: uv run pytest
+        run: uv run --no-sync pytest

@@ -461,7 +461,7 @@ dev = [
 requires-dist = [
     { name = "fastembed", specifier = ">=0.8.1" },
     { name = "fastmcp", specifier = ">=2.0.0" },
-    { name = "mcp", specifier = ">=1.0.0" },
+    { name = "mcp", specifier = ">=1.24.0,<3" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "regopy", specifier = ">=0.4.0" },
 ]

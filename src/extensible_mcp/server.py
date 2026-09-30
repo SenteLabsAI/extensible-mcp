@@ -15,6 +15,7 @@ from fastmcp import FastMCP, Context
 from fastmcp.server.lifespan import lifespan
 import mcp.types as mcp_types
 
+from ._mcp_compat import result_is_error
 from .client_manager import ClientManager, TokenExpiredError
 from .config import Config, find_config_path, load_config
 from .filters import (
@@ -258,7 +259,7 @@ def create_server(
         except Exception as e:
             return f"Error calling tool '{tool_name}': {e}"
 
-        if result.isError:
+        if result_is_error(result):
             texts = [
                 block.text
                 for block in result.content

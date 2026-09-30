@@ -9,12 +9,16 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
-import httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamable_http_client
 import mcp.types as mcp_types
 
+from ._mcp_compat import (
+    HTTPStatusError,
+    http_streams,
+    new_http_client,
+    tool_input_schema,
+)
 from .types import ServerConfig, ToolRecord
 
 logger = logging.getLogger(__name__)
@@ -49,6 +53,22 @@ class TokenExpiredError(Exception):
             f"Authentication failed for server '{server_name}' "
             f"(token unchanged for {token_age_minutes} minutes)"
         )
+
+
+class _AuthWatch:
+    """Records whether a server answered 401/403 during one URL session.
+
+    mcp 2.x turns an HTTP error status into a generic JSON-RPC error that no
+    longer carries the status, so the exception alone cannot say it was auth.
+    One per call, so concurrent calls to the same server don't share it.
+    """
+
+    def __init__(self) -> None:
+        self.rejected = False
+
+    async def on_response(self, response: Any) -> None:
+        if response.status_code in (401, 403):
+            self.rejected = True
 
 
 class _Connection:
@@ -90,18 +110,35 @@ class _Connection:
             self._token_set_at = time.monotonic()
         return value
 
-    def _make_http_client(self) -> httpx.AsyncClient | None:
-        """Build an httpx client with auth headers if a token is available."""
+    def _make_http_client(self, auth: _AuthWatch | None = None) -> Any:
+        """Build an HTTP client with auth headers if a token is available."""
         token = self._resolve_token()
         if not token:
             return None
-        return httpx.AsyncClient(
-            headers={"Authorization": f"Bearer {token}"},
+        return new_http_client(
+            {"Authorization": f"Bearer {token}"},
+            on_response=auth.on_response if auth else None,
         )
 
-    def _check_auth_error(self, exc: BaseException) -> None:
+    async def _open_url_session(
+        self, stack: AsyncExitStack, auth: _AuthWatch | None = None
+    ) -> ClientSession:
+        """Open an initialized session to this URL server on ``stack``."""
+        http_client = self._make_http_client(auth)
+        if http_client:
+            await stack.enter_async_context(http_client)
+        read, write = await stack.enter_async_context(
+            http_streams(self.config.url, http_client=http_client)
+        )
+        session = await stack.enter_async_context(ClientSession(read, write))
+        await session.initialize()
+        return session
+
+    def _check_auth_error(self, exc: BaseException, *, auth_rejected: bool = False) -> None:
         """Raise TokenExpiredError if the exception looks like a 401/403."""
-        if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (401, 403):
+        if auth_rejected:
+            raise TokenExpiredError(self.config.name, self.token_age_minutes) from exc
+        if isinstance(exc, HTTPStatusError) and exc.response.status_code in (401, 403):
             raise TokenExpiredError(self.config.name, self.token_age_minutes) from exc
         msg = str(exc).lower()
         if "401" in msg or "403" in msg or "unauthorized" in msg or "forbidden" in msg:
@@ -117,12 +154,7 @@ class _Connection:
         await stack.__aenter__()
         try:
             if self.config.url:
-                http_client = self._make_http_client()
-                if http_client:
-                    await stack.enter_async_context(http_client)
-                read, write, _ = await stack.enter_async_context(
-                    streamable_http_client(self.config.url, http_client=http_client)
-                )
+                session = await self._open_url_session(stack)
             else:
                 params = StdioServerParameters(
                     command=self.config.command,
@@ -130,8 +162,8 @@ class _Connection:
                     env=self.config.env,
                 )
                 read, write = await stack.enter_async_context(stdio_client(params))
-            session = await stack.enter_async_context(ClientSession(read, write))
-            await session.initialize()
+                session = await stack.enter_async_context(ClientSession(read, write))
+                await session.initialize()
         except Exception:
             await stack.aclose()
             raise
@@ -142,14 +174,7 @@ class _Connection:
         """Connect, list tools, and disconnect. Used for URL servers to avoid
         background tasks interfering with the stdio transport."""
         async with AsyncExitStack() as stack:
-            http_client = self._make_http_client()
-            if http_client:
-                await stack.enter_async_context(http_client)
-            read, write, _ = await stack.enter_async_context(
-                streamable_http_client(self.config.url, http_client=http_client)
-            )
-            session = await stack.enter_async_context(ClientSession(read, write))
-            await session.initialize()
+            session = await self._open_url_session(stack)
             result = await session.list_tools()
             return result.tools
 
@@ -157,22 +182,16 @@ class _Connection:
         self, tool_name: str, arguments: dict[str, Any]
     ) -> mcp_types.CallToolResult:
         """Connect, call a tool, and disconnect. Used for URL servers."""
+        auth = _AuthWatch()
         try:
             async with AsyncExitStack() as stack:
-                http_client = self._make_http_client()
-                if http_client:
-                    await stack.enter_async_context(http_client)
-                read, write, _ = await stack.enter_async_context(
-                    streamable_http_client(self.config.url, http_client=http_client)
-                )
-                session = await stack.enter_async_context(ClientSession(read, write))
-                await session.initialize()
+                session = await self._open_url_session(stack, auth)
                 return await session.call_tool(tool_name, arguments)
         except TokenExpiredError:
             raise
         except Exception as exc:
             if self._last_token_value:
-                self._check_auth_error(exc)
+                self._check_auth_error(exc, auth_rejected=auth.rejected)
             raise
 
     async def close(self) -> None:
@@ -231,7 +250,7 @@ class ClientManager:
                     name=tool.name,
                     qualified_name=qualified,
                     description=tool.description or "",
-                    input_schema=tool.inputSchema,
+                    input_schema=tool_input_schema(tool),
                     server_name=server_name,
                 )
             )
