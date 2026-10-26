@@ -2,6 +2,8 @@
 An AI agent can be talked into anything by the text it reads — a poisoned web page, a crafted email, a malicious tool description. extensible-mcp assumes exactly that. It loads MCP servers dynamically so your context doesn't carry tools you aren't using, selects tools by retrieval instead of prompt-stuffing, and runs every proposed action through a filter pipeline enforcing Rego policy — plain, deterministic code the model never reads and can never be talked past.
 The agent proposes; it never commits.
 
+If you require commercial support, please contact [Foreact Labs](https://foreactlabs.com) (formerly Sente Labs). You can reach us at support@foreactlabs.com. 
+
 The full architecture — signed human approvals bound to exact actions, provable policies, why "human in the loop" fails at agent speed — is in the white paper: **[Proof, Not Trust: Zero Trust for an Agentic World](https://sentelabs.ai/proof-not-trust)** — readable in full on the page.
 
 [<img src="assets/proof-not-trust-card.png" alt="Proof, Not Trust — Zero Trust for an Agentic World. A Sente Labs white paper." width="360">](https://sentelabs.ai/proof-not-trust)
