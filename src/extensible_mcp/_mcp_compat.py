@@ -34,14 +34,26 @@ else:
 
 HTTPStatusError = http_lib.HTTPStatusError
 
+# The MCP SDK's own defaults (mcp.shared._httpx_utils: MCP_DEFAULT_TIMEOUT,
+# MCP_DEFAULT_SSE_READ_TIMEOUT), the timeouts a URL server without a token
+# gets from the client the SDK builds itself. Without them, a client built
+# here falls back to httpx's 5 s default for every operation.
+HTTP_TIMEOUT_S = 30.0
+HTTP_READ_TIMEOUT_S = 300.0
+
 
 def new_http_client(
     headers: dict[str, str],
     on_response: Callable[[Any], Awaitable[None]] | None = None,
 ) -> Any:
-    """An async HTTP client of the kind this SDK's transport accepts."""
+    """An async HTTP client of the kind this SDK's transport accepts, with
+    the timeouts the SDK gives the clients it builds itself."""
     hooks = {"response": [on_response]} if on_response else {}
-    return http_lib.AsyncClient(headers=headers, event_hooks=hooks)
+    return http_lib.AsyncClient(
+        headers=headers,
+        event_hooks=hooks,
+        timeout=http_lib.Timeout(HTTP_TIMEOUT_S, read=HTTP_READ_TIMEOUT_S),
+    )
 
 
 @asynccontextmanager
